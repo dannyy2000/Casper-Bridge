@@ -1,0 +1,52 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Testing
+coverage/
+*.lcov
+
+# Production
+build/
+dist/
+*.wasm
+
+# Environment
+.env
+.env.local
+.env.production
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Rust
+target/
+**/*.rs.bk
+Cargo.lock
+
+# Hardhat
+cache/
+artifacts/
+
+# Casper
+*.pem
+public_key.pem
+public_key_hex
+secret_key.pem
+
+# Relayer
+relayer/logs/

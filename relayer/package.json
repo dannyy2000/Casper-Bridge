@@ -13,7 +13,8 @@
     "casper-js-sdk": "^2.15.4",
     "ethers": "^6.9.0",
     "dotenv": "^16.3.1",
-    "winston": "^3.11.0"
+    "winston": "^3.11.0",
+    "@noble/ed25519": "^2.0.0"
   },
   "devDependencies": {
     "@types/node": "^20.10.0",

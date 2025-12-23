@@ -22,14 +22,17 @@ class BridgeRelayer {
   constructor() {
     logger.info('Initializing CasperBridge Relayer...');
 
-    this.casperMonitor = new CasperMonitor({
-      rpcUrl: process.env.CASPER_RPC_URL!,
-      networkName: process.env.CASPER_NETWORK_NAME!,
-      vaultContract: process.env.CASPER_VAULT_CONTRACT!,
-      privateKeyPath: process.env.CASPER_PRIVATE_KEY_PATH!,
-      pollInterval: parseInt(process.env.POLL_INTERVAL_MS || '5000'),
-      confirmationBlocks: parseInt(process.env.CONFIRMATION_BLOCKS_CASPER || '3'),
-    });
+    this.casperMonitor = new CasperMonitor(
+      {
+        rpcUrl: process.env.CASPER_RPC_URL!,
+        networkName: process.env.CASPER_NETWORK_NAME!,
+        vaultContract: process.env.CASPER_VAULT_CONTRACT!,
+        privateKeyPath: process.env.CASPER_PRIVATE_KEY_PATH!,
+        pollInterval: parseInt(process.env.POLL_INTERVAL_MS || '5000'),
+        confirmationBlocks: parseInt(process.env.CONFIRMATION_BLOCKS_CASPER || '3'),
+      },
+      process.env.CASPER_PRIVATE_KEY_HEX!  // Ed25519 private key as hex string
+    );
 
     this.ethereumMonitor = new EthereumMonitor({
       rpcUrl: process.env.ETHEREUM_RPC_URL!,

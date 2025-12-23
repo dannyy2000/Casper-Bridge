@@ -6,6 +6,7 @@
 import { EventEmitter } from 'events';
 import { ethers } from 'ethers';
 import { Logger } from './logger';
+import { EthereumSigner } from './signature-utils';
 
 const logger = Logger.getInstance();
 
@@ -22,6 +23,7 @@ export class EthereumMonitor extends EventEmitter {
   private config: EthereumMonitorConfig;
   private provider: ethers.JsonRpcProvider;
   private wallet: ethers.Wallet;
+  private signer: EthereumSigner;
   private contract: ethers.Contract | null = null;
   private isRunning: boolean = false;
   private lastProcessedBlock: number = 0;
@@ -38,6 +40,7 @@ export class EthereumMonitor extends EventEmitter {
     this.config = config;
     this.provider = new ethers.JsonRpcProvider(config.rpcUrl);
     this.wallet = new ethers.Wallet(config.privateKey, this.provider);
+    this.signer = new EthereumSigner(config.privateKey);
   }
 
   async start(): Promise<void> {
@@ -114,7 +117,25 @@ export class EthereumMonitor extends EventEmitter {
     logger.info('Submitting mint proof to Ethereum', { lockEvent });
 
     try {
-      // TODO: Gather validator signatures
+      // STEP 1: Create message hash (MUST match contract's _getMessageHash)
+      const messageHash = this.signer.createMessageHash(
+        'casper',                        // sourceChain
+        lockEvent.txHash || '0x0',       // sourceTxHash
+        lockEvent.amount.toString(),     // amount (as string)
+        lockEvent.destinationAddress,    // recipient
+        lockEvent.nonce.toString()       // nonce (as string)
+      );
+
+      // STEP 2: Sign the message hash
+      const signature = await this.signer.signMessage(messageHash);
+
+      logger.info('Generated signature for mint proof', {
+        messageHash,
+        signature,
+        validator: this.signer.getAddress()
+      });
+
+      // STEP 3: Create proof with signature
       const proof = {
         sourceChain: 'casper',
         sourceTxHash: lockEvent.txHash || '0x0',
@@ -122,21 +143,22 @@ export class EthereumMonitor extends EventEmitter {
         recipient: lockEvent.destinationAddress,
         nonce: lockEvent.nonce,
         validatorSignatures: [
-          '0x00', // Placeholder for MVP
-          '0x00',
+          signature, // Real cryptographic signature!
         ],
       };
 
+      // STEP 4: Submit to Ethereum contract
       const tx = await this.contract.mint(proof);
       logger.info('Mint transaction submitted', { txHash: tx.hash });
 
       const receipt = await tx.wait();
-      logger.info('Mint transaction confirmed', {
+      logger.info('✅ Mint transaction confirmed', {
         txHash: receipt.hash,
         blockNumber: receipt.blockNumber,
+        validator: this.signer.getAddress()
       });
     } catch (error) {
-      logger.error('Error submitting mint proof', { error });
+      logger.error('❌ Error submitting mint proof', { error });
       throw error;
     }
   }

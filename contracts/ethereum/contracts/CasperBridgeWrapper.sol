@@ -5,6 +5,8 @@ import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/Pausable.sol";
+import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 
 /**
  * @title CasperBridgeWrapper
@@ -78,6 +80,72 @@ contract CasperBridgeWrapper is ERC20, Ownable, ReentrancyGuard, Pausable {
     }
 
     /**
+     * @dev Create message hash for validator signatures
+     * @notice This hash ensures all validators sign the same data
+     * @param proof The mint proof containing transaction details
+     * @return bytes32 The message hash that validators must sign
+     */
+    function _getMessageHash(MintProof calldata proof) private pure returns (bytes32) {
+        // Create deterministic hash from proof data
+        // All validators must sign THIS EXACT message
+        return keccak256(abi.encodePacked(
+            proof.sourceChain,      // "casper"
+            proof.sourceTxHash,     // Transaction hash on Casper
+            proof.amount,           // Amount being bridged
+            proof.recipient,        // Who receives the tokens
+            proof.nonce            // Unique nonce to prevent replays
+        ));
+    }
+
+    /**
+     * @dev Verify validator signatures on a proof
+     * @notice Checks that enough valid validators signed the message
+     * @param proof The proof with signatures to verify
+     * @return bool True if proof has sufficient valid signatures
+     */
+    function _verifySignatures(MintProof calldata proof) private view returns (bool) {
+        bytes32 messageHash = _getMessageHash(proof);
+        // Convert to Ethereum signed message hash (adds prefix)
+        bytes32 ethSignedMessageHash = MessageHashUtils.toEthSignedMessageHash(messageHash);
+
+        uint256 validSignatures = 0;
+
+        // Track which validators have signed to prevent duplicate counting
+        // Using dynamic array in memory to store signers we've seen
+        address[] memory seenSigners = new address[](proof.validatorSignatures.length);
+        uint256 seenCount = 0;
+
+        for (uint256 i = 0; i < proof.validatorSignatures.length; i++) {
+            // Recover the signer's address from the signature
+            address signer = ECDSA.recover(ethSignedMessageHash, proof.validatorSignatures[i]);
+
+            // Check if this signer is a registered validator
+            if (!validators[signer]) {
+                continue; // Skip invalid validators
+            }
+
+            // Check if we've already counted this validator
+            bool isDuplicate = false;
+            for (uint256 j = 0; j < seenCount; j++) {
+                if (seenSigners[j] == signer) {
+                    isDuplicate = true;
+                    break;
+                }
+            }
+
+            // Only count if not a duplicate
+            if (!isDuplicate) {
+                seenSigners[seenCount] = signer;
+                seenCount++;
+                validSignatures++;
+            }
+        }
+
+        // Require at least M-of-N validators signed
+        return validSignatures >= requiredSignatures;
+    }
+
+    /**
      * @dev Mint wCSPR when CSPR is locked on Casper
      * @param proof Proof of lock event from Casper Network
      */
@@ -86,7 +154,7 @@ contract CasperBridgeWrapper is ERC20, Ownable, ReentrancyGuard, Pausable {
         nonReentrant
         whenNotPaused
     {
-        // Verify nonce hasn't been processed
+        // Verify nonce hasn't been processed (prevents replay attacks)
         require(!processedNonces[proof.nonce], "Proof already processed");
 
         // Verify sufficient validator signatures
@@ -95,9 +163,9 @@ contract CasperBridgeWrapper is ERC20, Ownable, ReentrancyGuard, Pausable {
             "Insufficient validator signatures"
         );
 
-        // TODO: Verify validator signatures
-        // For MVP, we trust the validators
-        // In production, implement ECDSA signature verification
+        // CRITICAL SECURITY: Verify cryptographic signatures
+        // This ensures the proof is authentic and signed by real validators
+        require(_verifySignatures(proof), "Invalid validator signatures");
 
         // Mark nonce as processed
         processedNonces[proof.nonce] = true;

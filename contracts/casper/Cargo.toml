@@ -4,21 +4,13 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-odra = { version = "1.5.1", default-features = false }
-# Ed25519 signature verification (Casper uses Ed25519 keys)
-ed25519-dalek = { version = "2.1", default-features = false, features = ["alloc"] }
-
-[dev-dependencies]
-odra = { version = "1.5.1" }
+casper-contract = "1.4.4"
+casper-types = "1.5.0"
 
 [lib]
-crate-type = ["cdylib", "rlib"]
+crate-type = ["cdylib"]
 
 [profile.release]
 codegen-units = 1
 opt-level = "z"
 lto = true
-strip = true
-
-[features]
-default = []

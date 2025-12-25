@@ -94,7 +94,8 @@ export class EthereumMonitor extends EventEmitter {
     const events = await this.contract.queryFilter(filter, fromBlock, toBlock);
 
     for (const event of events) {
-      if (event.args) {
+      // Type guard to check if event is an EventLog with args
+      if ('args' in event && event.args) {
         this.emit('AssetBurned', {
           user: event.args.user,
           amount: event.args.amount.toString(),

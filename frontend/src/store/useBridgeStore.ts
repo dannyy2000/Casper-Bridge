@@ -5,13 +5,14 @@
 
 import { create } from 'zustand';
 import { ethers } from 'ethers';
+import { CONTRACTS } from '../config/contracts';
 
 export type BridgeDirection = 'casper-to-ethereum' | 'ethereum-to-casper';
 
 export interface WalletState {
   // Ethereum wallet
   ethereumAddress: string | null;
-  ethereumProvider: ethers.BrowserProvider | null;
+  ethereumProvider: ethers.JsonRpcProvider | null;
   ethereumBalance: string | null;
   wCSPRBalance: string | null;
 
@@ -62,19 +63,25 @@ export const useBridgeStore = create<WalletState & BridgeActions>((set, get) => 
         return;
       }
 
-      const provider = new ethers.BrowserProvider(window.ethereum);
-      const accounts = await provider.send('eth_requestAccounts', []);
+      // Request account access
+      const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
       const address = accounts[0];
+
+      // Create a read-only provider using Alchemy RPC (bypasses MetaMask's RPC)
+      const alchemyProvider = new ethers.JsonRpcProvider(
+        CONTRACTS.ethereum.rpcUrl
+      );
 
       set({
         ethereumAddress: address,
-        ethereumProvider: provider,
+        ethereumProvider: alchemyProvider, // Use Alchemy for all read operations
       });
 
-      // Update balance
+      // Update balance once after connecting
       await get().updateEthereumBalance();
 
       console.log('✅ Connected to Ethereum:', address);
+      console.log('📡 Using Alchemy RPC for data queries');
     } catch (error) {
       console.error('Failed to connect to Ethereum:', error);
     }
@@ -97,8 +104,14 @@ export const useBridgeStore = create<WalletState & BridgeActions>((set, get) => 
       const balance = await ethereumProvider.getBalance(ethereumAddress);
       set({ ethereumBalance: ethers.formatEther(balance) });
 
-      // TODO: Fetch wCSPR balance from contract
-      set({ wCSPRBalance: '0.0' });
+      // Fetch wCSPR balance from contract
+      const contract = new ethers.Contract(
+        CONTRACTS.ethereum.wrapperAddress,
+        CONTRACTS.ethereum.abi,
+        ethereumProvider
+      );
+      const wCSPRBal = await contract.balanceOf(ethereumAddress);
+      set({ wCSPRBalance: ethers.formatEther(wCSPRBal) });
     } catch (error) {
       console.error('Failed to update Ethereum balance:', error);
     }

@@ -1,6 +1,10 @@
 [project]
 name = "casper-bridge-vault"
 
+[[contract]]
+name = "CasperVault"
+fqn = "casper_bridge_vault::CasperVault"
+
 [target.casper]
 rpc-url = "http://65.21.235.219:7777"
 network-name = "casper-test"

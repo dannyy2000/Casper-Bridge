@@ -7,6 +7,7 @@ import { useState } from 'react';
 import { useBridgeStore } from '../store/useBridgeStore';
 import { ArrowDownUp, AlertCircle, Loader2, CheckCircle2 } from 'lucide-react';
 import { ethers } from 'ethers';
+import { CONTRACTS } from '../config/contracts';
 
 export function BridgeForm() {
   const {
@@ -14,7 +15,6 @@ export function BridgeForm() {
     setBridgeDirection,
     ethereumAddress,
     casperAddress,
-    ethereumBalance,
     casperBalance,
     wCSPRBalance,
     isProcessing,
@@ -25,6 +25,7 @@ export function BridgeForm() {
   const [amount, setAmount] = useState('');
   const [status, setStatus] = useState<'idle' | 'signing' | 'submitting' | 'success' | 'error'>('idle');
   const [errorMessage, setErrorMessage] = useState('');
+  const [manualCasperAddress, setManualCasperAddress] = useState('');
 
   const isCasperToEthereum = bridgeDirection === 'casper-to-ethereum';
 
@@ -36,7 +37,10 @@ export function BridgeForm() {
   // Check if wallets are connected
   const sourceWalletConnected = isCasperToEthereum ? !!casperAddress : !!ethereumAddress;
   const destWalletConnected = isCasperToEthereum ? !!ethereumAddress : !!casperAddress;
-  const bothWalletsConnected = sourceWalletConnected && destWalletConnected;
+  // For Ethereum→Casper, we can use manual address input instead of wallet connection
+  const canBridge = isCasperToEthereum
+    ? (sourceWalletConnected && destWalletConnected)
+    : (sourceWalletConnected && (destWalletConnected || manualCasperAddress.trim().length > 0));
 
   const handleSwapDirection = () => {
     const newDirection = isCasperToEthereum ? 'ethereum-to-casper' : 'casper-to-ethereum';
@@ -52,8 +56,10 @@ export function BridgeForm() {
       return;
     }
 
-    if (!bothWalletsConnected) {
-      setErrorMessage('Please connect both wallets');
+    if (!canBridge) {
+      setErrorMessage(isCasperToEthereum
+        ? 'Please connect both wallets'
+        : 'Please connect Ethereum wallet and enter Casper address');
       return;
     }
 
@@ -89,31 +95,78 @@ export function BridgeForm() {
   const bridgeCasperToEthereum = async () => {
     console.log(`Bridging ${amount} CSPR to Ethereum...`);
 
-    // TODO: Implement actual Casper contract interaction
-    // For now, simulate transaction
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    // NOTE: Requires Casper vault contract to be deployed
+    // Once deployed, use casper-js-sdk to interact with the contract
+    if (!CONTRACTS.casper.vaultContract) {
+      throw new Error('Casper vault contract not deployed yet. Please deploy the Casper contract first.');
+    }
 
-    setStatus('submitting');
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    // TODO: Implement Casper SDK interaction when contract is deployed
+    // Example flow:
+    // 1. Create deploy using CasperClient
+    // 2. Call lock_cspr with amount
+    // 3. Sign with CSPR.click wallet
+    // 4. Wait for deploy execution
 
-    const mockTxHash = '0x' + Math.random().toString(16).substring(2, 66);
-    setLastTransaction(mockTxHash);
-
-    console.log('✅ Casper lock transaction:', mockTxHash);
+    throw new Error('Casper contract integration pending deployment');
   };
 
   const bridgeEthereumToCasper = async () => {
     console.log(`Bridging ${amount} wCSPR to Casper...`);
 
-    // TODO: Implement actual Ethereum contract interaction
-    // For now, simulate transaction
+    const { ethereumProvider } = useBridgeStore.getState();
+    const targetCasperAddress = casperAddress || manualCasperAddress;
+
+    if (!ethereumProvider || !targetCasperAddress) {
+      throw new Error('Ethereum wallet not connected or Casper address not provided');
+    }
+
+    console.log('Using provider:', ethereumProvider.constructor.name);
+
+    // Get signer from MetaMask for signing transaction
+    let signer;
+    try {
+      // Use a simple provider wrapper that only calls MetaMask for signing
+      const web3Provider = new ethers.BrowserProvider(window.ethereum);
+      signer = await web3Provider.getSigner();
+      console.log('Signer obtained successfully');
+    } catch (error: any) {
+      console.error('Failed to get signer:', error);
+      if (error.message?.includes('RPC')) {
+        throw new Error('MetaMask RPC error. Please wait 1 minute and try again, or switch MetaMask to a different RPC endpoint.');
+      }
+      throw error;
+    }
+
+    // Create contract instance
+    const contract = new ethers.Contract(
+      CONTRACTS.ethereum.wrapperAddress,
+      CONTRACTS.ethereum.abi,
+      signer
+    );
+
+    // Convert amount to wei (wCSPR has 18 decimals like ETH)
+    const amountWei = ethers.parseEther(amount);
+
+    console.log('Burning wCSPR on Ethereum...');
+    console.log('Amount:', amount, 'wCSPR');
+    console.log('Destination Casper address:', targetCasperAddress);
+
     setStatus('submitting');
-    await new Promise((resolve) => setTimeout(resolve, 3000));
 
-    const mockTxHash = '0x' + Math.random().toString(16).substring(2, 66);
-    setLastTransaction(mockTxHash);
+    // Call burn function on the contract
+    // Note: burn function signature is burn(uint256 amount, string destinationChain, string destinationAddress)
+    const tx = await contract.burn(amountWei, "casper", targetCasperAddress);
 
-    console.log('✅ Ethereum burn transaction:', mockTxHash);
+    console.log('Transaction sent:', tx.hash);
+    setLastTransaction(tx.hash);
+
+    // Wait for confirmation
+    console.log('Waiting for confirmation...');
+    const receipt = await tx.wait();
+
+    console.log('✅ Transaction confirmed in block:', receipt.blockNumber);
+    console.log('Transaction hash:', receipt.hash);
   };
 
   const setMaxAmount = () => {
@@ -187,6 +240,26 @@ export function BridgeForm() {
         </div>
       </div>
 
+      {/* Manual Casper Address Input (for Ethereum→Casper without wallet) */}
+      {!isCasperToEthereum && !casperAddress && (
+        <div className="mb-6">
+          <label className="block text-sm font-medium mb-2 text-gray-300">
+            Casper Destination Address
+          </label>
+          <input
+            type="text"
+            value={manualCasperAddress}
+            onChange={(e) => setManualCasperAddress(e.target.value)}
+            placeholder="account-hash-... or public key hex"
+            className="input"
+            disabled={isProcessing}
+          />
+          <div className="text-xs text-gray-400 mt-1">
+            Enter your Casper wallet address to receive CSPR
+          </div>
+        </div>
+      )}
+
       {/* Error Message */}
       {errorMessage && (
         <div className="mb-4 p-3 bg-red-500/10 border border-red-500/50 rounded-lg flex items-start gap-2">
@@ -220,7 +293,7 @@ export function BridgeForm() {
       {/* Bridge Button */}
       <button
         onClick={handleBridge}
-        disabled={isProcessing || !bothWalletsConnected || !amount || parseFloat(amount) <= 0}
+        disabled={isProcessing || !canBridge || !amount || parseFloat(amount) <= 0}
         className="btn-primary w-full flex items-center justify-center gap-2"
       >
         {isProcessing ? (
@@ -228,8 +301,8 @@ export function BridgeForm() {
             <Loader2 size={20} className="animate-spin" />
             Processing...
           </>
-        ) : !bothWalletsConnected ? (
-          'Connect Both Wallets'
+        ) : !canBridge ? (
+          isCasperToEthereum ? 'Connect Both Wallets' : 'Connect Ethereum & Enter Casper Address'
         ) : (
           <>
             Bridge {sourceToken} → {destToken}

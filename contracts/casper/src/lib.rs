@@ -3,16 +3,20 @@
 
 extern crate alloc;
 
-use alloc::{boxed::Box, format, string::String, vec, vec::Vec};
+use alloc::{
+    format,
+    string::{String, ToString},
+    vec,
+    vec::Vec,
+};
 use casper_contract::{
     contract_api::{runtime, storage, system},
     unwrap_or_revert::UnwrapOrRevert,
 };
 use casper_types::{
+    addressable_entity::{EntityEntryPoint as EntryPoint, EntryPoints},
     bytesrepr::{FromBytes, ToBytes},
-    contracts::NamedKeys,
-    runtime_args, CLType, CLTyped, CLValue, EntryPoint, EntryPointAccess, EntryPointType,
-    EntryPoints, Key, Parameter, RuntimeArgs, U512,
+    CLType, CLTyped, CLValue, EntryPointAccess, EntryPointPayment, EntryPointType, Key, NamedKeys, Parameter, U512,
 };
 
 // Storage keys
@@ -298,7 +302,8 @@ pub extern "C" fn call() {
         ],
         CLType::Unit,
         EntryPointAccess::Public,
-        EntryPointType::Contract,
+        EntryPointType::Called,
+        EntryPointPayment::Caller,
     ));
 
     // lock_cspr
@@ -311,7 +316,8 @@ pub extern "C" fn call() {
         ],
         CLType::Unit,
         EntryPointAccess::Public,
-        EntryPointType::Contract,
+        EntryPointType::Called,
+        EntryPointPayment::Caller,
     ));
 
     // release_cspr
@@ -323,11 +329,12 @@ pub extern "C" fn call() {
             Parameter::new("amount", CLType::U512),
             Parameter::new("recipient", CLType::Key),
             Parameter::new("nonce", CLType::U64),
-            Parameter::new("signatures", CLType::Any),  // Use Any for complex types
+            Parameter::new("signatures", CLType::Any),
         ],
         CLType::Unit,
         EntryPointAccess::Public,
-        EntryPointType::Contract,
+        EntryPointType::Called,
+        EntryPointPayment::Caller,
     ));
 
     // add_validator
@@ -336,7 +343,8 @@ pub extern "C" fn call() {
         vec![Parameter::new("validator", CLType::Key)],
         CLType::Unit,
         EntryPointAccess::Public,
-        EntryPointType::Contract,
+        EntryPointType::Called,
+        EntryPointPayment::Caller,
     ));
 
     // remove_validator
@@ -345,7 +353,8 @@ pub extern "C" fn call() {
         vec![Parameter::new("validator", CLType::Key)],
         CLType::Unit,
         EntryPointAccess::Public,
-        EntryPointType::Contract,
+        EntryPointType::Called,
+        EntryPointPayment::Caller,
     ));
 
     // set_required_signatures
@@ -354,7 +363,8 @@ pub extern "C" fn call() {
         vec![Parameter::new("count", CLType::U32)],
         CLType::Unit,
         EntryPointAccess::Public,
-        EntryPointType::Contract,
+        EntryPointType::Called,
+        EntryPointPayment::Caller,
     ));
 
     // pause
@@ -363,7 +373,8 @@ pub extern "C" fn call() {
         vec![],
         CLType::Unit,
         EntryPointAccess::Public,
-        EntryPointType::Contract,
+        EntryPointType::Called,
+        EntryPointPayment::Caller,
     ));
 
     // unpause
@@ -372,7 +383,8 @@ pub extern "C" fn call() {
         vec![],
         CLType::Unit,
         EntryPointAccess::Public,
-        EntryPointType::Contract,
+        EntryPointType::Called,
+        EntryPointPayment::Caller,
     ));
 
     // is_validator
@@ -381,7 +393,8 @@ pub extern "C" fn call() {
         vec![Parameter::new("address", CLType::Key)],
         CLType::Bool,
         EntryPointAccess::Public,
-        EntryPointType::Contract,
+        EntryPointType::Called,
+        EntryPointPayment::Caller,
     ));
 
     // get_total_locked
@@ -390,7 +403,8 @@ pub extern "C" fn call() {
         vec![],
         CLType::U512,
         EntryPointAccess::Public,
-        EntryPointType::Contract,
+        EntryPointType::Called,
+        EntryPointPayment::Caller,
     ));
 
     // get_nonce
@@ -399,18 +413,20 @@ pub extern "C" fn call() {
         vec![],
         CLType::U64,
         EntryPointAccess::Public,
-        EntryPointType::Contract,
+        EntryPointType::Called,
+        EntryPointPayment::Caller,
     ));
 
     // Create named keys
     let named_keys = NamedKeys::new();
 
-    // Install the contract
-    let (contract_hash, _version) = storage::new_contract(
+    // Install the contract (locked/non-upgradeable)
+    let (contract_hash, _) = storage::new_locked_contract(
         entry_points,
         Some(named_keys),
-        Some(format!("{}_package_hash", contract_name)),
-        Some(format!("{}_access_uref", contract_name)),
+        None,
+        None,
+        None,  // No message topics
     );
 
     // Store contract hash under the contract name

@@ -38,7 +38,9 @@ export class EthereumMonitor extends EventEmitter {
   constructor(config: EthereumMonitorConfig) {
     super();
     this.config = config;
-    this.provider = new ethers.JsonRpcProvider(config.rpcUrl);
+    // Create provider with explicit network config to avoid detection timeout
+    const network = new ethers.Network('sepolia', config.chainId);
+    this.provider = new ethers.JsonRpcProvider(config.rpcUrl, network, { staticNetwork: network });
     this.wallet = new ethers.Wallet(config.privateKey, this.provider);
     this.signer = new EthereumSigner(config.privateKey);
   }
@@ -58,8 +60,20 @@ export class EthereumMonitor extends EventEmitter {
 
     this.isRunning = true;
 
-    // Get current block to start from
-    this.lastProcessedBlock = await this.provider.getBlockNumber();
+    // Get current block to start from (with retry logic)
+    let retries = 3;
+    while (retries > 0) {
+      try {
+        this.lastProcessedBlock = await this.provider.getBlockNumber();
+        logger.info('Ethereum monitor started at block', { block: this.lastProcessedBlock });
+        break;
+      } catch (error) {
+        retries--;
+        logger.warn(`Failed to get block number, retries left: ${retries}`, { error });
+        if (retries === 0) throw error;
+        await this.sleep(2000);
+      }
+    }
 
     this.pollEvents();
   }
@@ -90,22 +104,47 @@ export class EthereumMonitor extends EventEmitter {
   private async processBlocks(fromBlock: number, toBlock: number): Promise<void> {
     if (!this.contract) return;
 
-    const filter = this.contract.filters.AssetBurned();
-    const events = await this.contract.queryFilter(filter, fromBlock, toBlock);
+    // Limit block range for Alchemy free tier (max 10 blocks per query)
+    const MAX_BLOCKS_PER_QUERY = 10;
+    let currentFrom = fromBlock;
 
-    for (const event of events) {
-      // Type guard to check if event is an EventLog with args
-      if ('args' in event && event.args) {
-        this.emit('AssetBurned', {
-          user: event.args.user,
-          amount: event.args.amount.toString(),
-          destinationChain: event.args.destinationChain,
-          destinationAddress: event.args.destinationAddress,
-          nonce: event.args.nonce.toString(),
-          blockNumber: event.blockNumber,
-          txHash: event.transactionHash,
-        });
+    while (currentFrom <= toBlock) {
+      const currentTo = Math.min(currentFrom + MAX_BLOCKS_PER_QUERY - 1, toBlock);
+
+      try {
+        const filter = this.contract.filters.AssetBurned();
+        const events = await this.contract.queryFilter(filter, currentFrom, currentTo);
+
+        logger.debug(`Queried blocks ${currentFrom} to ${currentTo}, found ${events.length} events`);
+
+        for (const event of events) {
+          // Type guard to check if event is an EventLog with args
+          if ('args' in event && event.args) {
+            logger.info('🔥 Detected AssetBurned event!', {
+              user: event.args.user,
+              amount: event.args.amount.toString(),
+              nonce: event.args.nonce.toString(),
+              block: event.blockNumber,
+              tx: event.transactionHash
+            });
+
+            this.emit('AssetBurned', {
+              user: event.args.user,
+              amount: event.args.amount.toString(),
+              destinationChain: event.args.destinationChain,
+              destinationAddress: event.args.destinationAddress,
+              nonce: event.args.nonce.toString(),
+              blockNumber: event.blockNumber,
+              txHash: event.transactionHash,
+            });
+          }
+        }
+      } catch (error) {
+        logger.warn(`Failed to query blocks ${currentFrom}-${currentTo}`, { error });
+        // Continue to next range even if this one fails
       }
+
+      currentFrom = currentTo + 1;
     }
   }
 

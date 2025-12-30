@@ -1,5 +1,5 @@
 # CasperBridge Project Status
-**Last Updated**: December 25, 2025
+**Last Updated**: December 29, 2025
 
 ## 🎯 Project Overview
 Cross-chain bridge enabling CSPR token transfers between Casper Network and Ethereum (Sepolia testnet).
@@ -19,11 +19,22 @@ Cross-chain bridge enabling CSPR token transfers between Casper Network and Ethe
   - ✅ Multi-signature validator system
   - ✅ Tested burn flow successfully
 
-### 2. Casper Smart Contract ✅ (Deployment Blocked)
-- **Status**: Built, awaiting deployment resolution
+### 2. Casper Smart Contract ✅ DEPLOYED
+- **Status**: Successfully Deployed & Initialized on Casper 2.1 Testnet
+- **Contract Hash**: `hash-bb63d7f3b51f0c40ba1b70f896c5700e7be6c87d666555c5ac27e41d7c614c96`
+- **Entity Address**: `entity-contract-bb63d7f3b51f0c40ba1b70f896c5700e7be6c87d666555c5ac27e41d7c614c96`
+- **Contract Package**: `contract-package-c0837569051230341883338ac73b4dc65c65c6faa4a83611f95cf5b825a09ff3`
+- **Named Key**: `bridge_vault_final`
+- **Network**: Casper 2.1 Testnet (casper-test)
+- **Explorer**: https://testnet.cspr.live/contract/bb63d7f3b51f0c40ba1b70f896c5700e7be6c87d666555c5ac27e41d7c614c96
 - **WASM Location**: `contracts/casper/target/wasm32-unknown-unknown/release/casper_bridge_vault.wasm`
-- **Size**: 82 KB
-- **Dependencies**: casper-contract 1.4.4, casper-types 1.5.0
+- **WASM Size**: 93 KB
+- **Dependencies**: casper-contract 5.0.0, casper-types 6.0.0, base64ct 1.7.2
+- **Rust Version**: nightly-2024-07-31
+- **Configuration**: required_sigs=1, min_amount=1,000,000,000
+- **Deployment Transactions**:
+  - Install: `c735d303f4c29aa89d1c6dc9f1168c9cd14b165ac5e7290b9070913606c4c82c`
+  - Init: `ea445c29c7a2d9b65f9822c130c0de8067fb0743b60244f047e242e64bc5bbc1`
 - **Functionality**:
   - ✅ Lock CSPR for bridging to Ethereum
   - ✅ Release CSPR when proof verified from Ethereum
@@ -31,11 +42,7 @@ Cross-chain bridge enabling CSPR token transfers between Casper Network and Ethe
   - ✅ Pause/unpause mechanism
   - ✅ Nonce-based replay protection
   - ✅ Multi-signature verification
-- **Deployment Issue**:
-  - Error: `ApiError::Unhandled [31]` on Casper 2.0 testnet
-  - Tested with both `put-deploy` (deprecated) and `put-transaction`
-  - Issue affects even minimal test contracts
-  - **Action Required**: Community support via Casper Discord
+  - ✅ Query functions (is_validator, get_total_locked, get_nonce)
 
 ### 3. Relayer Service ✅
 - **Status**: Code complete, build successful, ready for testing
@@ -128,26 +135,24 @@ ETHEREUM_PRIVATE_KEY=YOUR_ETHEREUM_PRIVATE_KEY_HERE
 ```
 **Note**: Use a dedicated validator/relayer account, NOT your main wallet
 
-### MEDIUM PRIORITY (When Casper deploys)
+### HIGH PRIORITY (Now that Casper is deployed)
 
-#### 3. Update All Contract Addresses
-After successful Casper deployment, update:
+#### 3. Update All Contract Addresses ⚠️
 
 **A. Frontend Config** (`frontend/src/config/contracts.ts`):
 ```typescript
-vaultContract: 'hash-XXXXXXXXXX', // Replace PENDING_DEPLOYMENT
+vaultContract: 'hash-bb63d7f3b51f0c40ba1b70f896c5700e7be6c87d666555c5ac27e41d7c614c96',
 ```
 
 **B. Relayer Config** (`relayer/.env`):
 ```bash
-CASPER_VAULT_CONTRACT=hash-XXXXXXXXXX  # Replace PENDING_DEPLOYMENT
+CASPER_VAULT_CONTRACT=hash-bb63d7f3b51f0c40ba1b70f896c5700e7be6c87d666555c5ac27e41d7c614c96
 CASPER_PRIVATE_KEY_HEX=YOUR_ED25519_PRIVATE_KEY_HEX  # Convert from PEM
 ```
 
-**C. Convert Casper PEM to Hex** (for relayer):
+**C. Add Ethereum Private Key** (`relayer/.env`):
 ```bash
-# You'll need to extract the hex private key from /tmp/casper_deploy_key.pem
-# Can use casper-client or manual extraction
+ETHEREUM_PRIVATE_KEY=YOUR_ETHEREUM_PRIVATE_KEY_HERE
 ```
 
 #### 4. Test Relayer

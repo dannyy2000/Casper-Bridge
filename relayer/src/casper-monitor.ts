@@ -6,6 +6,7 @@
 import { EventEmitter } from 'events';
 import { Logger } from './logger';
 import { CasperSigner } from './signature-utils';
+import { CasperClient, CLPublicKey } from 'casper-js-sdk';
 
 const logger = Logger.getInstance();
 
@@ -18,16 +19,29 @@ export interface CasperMonitorConfig {
   confirmationBlocks: number;
 }
 
+interface LockEvent {
+  sourceChain: string;
+  sourceTxHash: string;
+  amount: string;
+  destinationChain: string;
+  destinationAddress: string;
+  nonce: number;
+  sender: string;
+}
+
 export class CasperMonitor extends EventEmitter {
   private config: CasperMonitorConfig;
   private signer: CasperSigner;
   private isRunning: boolean = false;
   private lastProcessedBlock: number = 0;
+  private casperClient: CasperClient;
+  private processedDeploys: Set<string> = new Set();
 
   constructor(config: CasperMonitorConfig, casperPrivateKeyHex: string) {
     super();
     this.config = config;
     this.signer = new CasperSigner(casperPrivateKeyHex);
+    this.casperClient = new CasperClient(config.rpcUrl);
   }
 
   async start(): Promise<void> {
@@ -38,8 +52,7 @@ export class CasperMonitor extends EventEmitter {
 
     this.isRunning = true;
 
-    // TODO: Implement actual Casper event monitoring
-    // For MVP, this is a placeholder
+    // Start polling for lock events
     this.pollEvents();
   }
 
@@ -51,12 +64,138 @@ export class CasperMonitor extends EventEmitter {
   private async pollEvents(): Promise<void> {
     while (this.isRunning) {
       try {
-        // TODO: Query Casper node for new events
-        // For MVP, implement basic polling logic
+        // Get latest block to check for executed deploys
+        const latestBlock = await this.casperClient.nodeClient.getLatestBlockInfo();
+
+        if (latestBlock?.block?.hash) {
+          await this.checkBlockForLockEvents(latestBlock.block.hash);
+        }
+
         await this.sleep(this.config.pollInterval);
-      } catch (error) {
-        logger.error('Error polling Casper events', { error });
+      } catch (error: any) {
+        logger.error('Error polling Casper events', { error: error.message });
+        await this.sleep(this.config.pollInterval);
       }
+    }
+  }
+
+  private async checkBlockForLockEvents(blockHash: string): Promise<void> {
+    try {
+      // Get block details
+      const blockData = await this.casperClient.nodeClient.getBlockInfo(blockHash);
+
+      if (!(blockData?.block as any)?.body?.deploy_hashes) {
+        return;
+      }
+
+      // Check each deploy in the block
+      for (const deployHash of (blockData.block as any).body.deploy_hashes) {
+        // Skip if already processed
+        if (this.processedDeploys.has(deployHash)) {
+          continue;
+        }
+
+        await this.checkDeployForLockEvent(deployHash);
+      }
+    } catch (error: any) {
+      logger.error('Error checking block for lock events', {
+        blockHash,
+        error: error.message
+      });
+    }
+  }
+
+  private async checkDeployForLockEvent(deployHash: string): Promise<void> {
+    try {
+      const [deploy, deployResult] = await this.casperClient.getDeploy(deployHash);
+
+      if (!deployResult?.execution_results?.[0]) {
+        return; // Deploy not executed yet
+      }
+
+      const executionResult = deployResult.execution_results[0].result;
+
+      // Check if execution was successful
+      if (!executionResult.Success) {
+        this.processedDeploys.add(deployHash);
+        return;
+      }
+
+      // Check if this deploy called the lock_cspr entry point
+      const session = deploy?.session;
+      if (!(session as any)?.storedContractByHash) {
+        this.processedDeploys.add(deployHash);
+        return;
+      }
+
+      const contractHash = (session as any).storedContractByHash.hash;
+      const entryPoint = (session as any).storedContractByHash.entry_point;
+
+      // Check if it's our vault contract and lock_cspr entry point
+      if (contractHash !== this.config.vaultContract || entryPoint !== 'lock_cspr') {
+        this.processedDeploys.add(deployHash);
+        return;
+      }
+
+      // Parse the lock event from the deploy args
+      const lockEvent = this.parseLockEvent(deploy, deployHash);
+
+      if (lockEvent) {
+        logger.info('🔒 Detected lock event on Casper', { lockEvent });
+
+        // Emit event for the main relayer to handle minting
+        this.emit('AssetLocked', lockEvent);
+
+        this.processedDeploys.add(deployHash);
+      }
+    } catch (error: any) {
+      logger.error('Error checking deploy for lock event', {
+        deployHash,
+        error: error.message
+      });
+    }
+  }
+
+  private parseLockEvent(deploy: any, deployHash: string): LockEvent | null {
+    try {
+      const args = deploy.session?.StoredContractByHash?.args;
+      if (!args) return null;
+
+      let destinationChain = '';
+      let destinationAddress = '';
+      let amount = '';
+
+      // Parse args array
+      for (const [name, value] of args) {
+        if (name === 'destination_chain') {
+          destinationChain = value.parsed || '';
+        } else if (name === 'destination_address') {
+          destinationAddress = value.parsed || '';
+        } else if (name === 'amount') {
+          amount = value.parsed || '';
+        }
+      }
+
+      if (!destinationChain || !destinationAddress || !amount) {
+        logger.warn('Incomplete lock event data', { deployHash });
+        return null;
+      }
+
+      // Generate nonce from deploy hash
+      const nonce = parseInt(deployHash.substring(0, 8), 16);
+
+      return {
+        sourceChain: 'casper',
+        sourceTxHash: deployHash,
+        amount,
+        destinationChain,
+        destinationAddress,
+        nonce,
+        sender: deploy.header?.account || '',
+      };
+    } catch (error: any) {
+      logger.error('Error parsing lock event', { error: error.message });
+      return null;
     }
   }
 

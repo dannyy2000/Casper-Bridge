@@ -14,8 +14,8 @@ export const CONTRACTS = {
     rpcUrl: 'https://eth-sepolia.g.alchemy.com/v2/wHwbkttFi9IOFoM5Wzh31Gw1IvNHL-lt',
   },
   casper: {
-    // TODO: Deploy Casper contract and add address here
-    vaultContract: 'PENDING_DEPLOYMENT', // Will be populated after Casper deployment
+    // Deployed on Casper 2.1 Testnet
+    vaultContract: 'hash-bb63d7f3b51f0c40ba1b70f896c5700e7be6c87d666555c5ac27e41d7c614c96',
     networkName: 'casper-test',
     rpcUrl: 'http://34.220.83.153:7777/rpc', // Updated to working RPC endpoint
   },

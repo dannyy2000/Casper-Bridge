@@ -8,7 +8,11 @@
 
 import { ethers } from 'ethers';
 import * as ed25519 from '@noble/ed25519';
+import { sha512 } from '@noble/hashes/sha512';
 import { Logger } from './logger';
+
+// Setup sha512 for ed25519 (required in Node.js)
+ed25519.etc.sha512Sync = (...m) => sha512(ed25519.etc.concatBytes(...m));
 
 const logger = Logger.getInstance();
 

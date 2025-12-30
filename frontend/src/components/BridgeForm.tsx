@@ -8,6 +8,12 @@ import { useBridgeStore } from '../store/useBridgeStore';
 import { ArrowDownUp, AlertCircle, Loader2, CheckCircle2 } from 'lucide-react';
 import { ethers } from 'ethers';
 import { CONTRACTS } from '../config/contracts';
+import {
+  CLPublicKey,
+  DeployUtil,
+  RuntimeArgs,
+  CLValueBuilder
+} from 'casper-js-sdk';
 
 export function BridgeForm() {
   const {
@@ -95,20 +101,192 @@ export function BridgeForm() {
   const bridgeCasperToEthereum = async () => {
     console.log(`Bridging ${amount} CSPR to Ethereum...`);
 
-    // NOTE: Requires Casper vault contract to be deployed
-    // Once deployed, use casper-js-sdk to interact with the contract
-    if (!CONTRACTS.casper.vaultContract) {
-      throw new Error('Casper vault contract not deployed yet. Please deploy the Casper contract first.');
+    if (!casperAddress) {
+      throw new Error('Casper wallet not connected');
     }
 
-    // TODO: Implement Casper SDK interaction when contract is deployed
-    // Example flow:
-    // 1. Create deploy using CasperClient
-    // 2. Call lock_cspr with amount
-    // 3. Sign with CSPR.click wallet
-    // 4. Wait for deploy execution
+    if (!ethereumAddress) {
+      throw new Error('Ethereum wallet not connected (needed for destination)');
+    }
 
-    throw new Error('Casper contract integration pending deployment');
+    try {
+      // Convert amount to motes (1 CSPR = 1,000,000,000 motes)
+      const amountInMotes = BigInt(Math.floor(parseFloat(amount) * 1_000_000_000));
+
+      // Get Casper Wallet provider
+      const provider = window.CasperWalletProvider?.() || window.csprclick;
+      if (!provider) {
+        throw new Error('Casper wallet provider not found');
+      }
+
+      // Get public key
+      const publicKeyHex = await provider.getActivePublicKey();
+      const publicKey = CLPublicKey.fromHex(publicKeyHex);
+
+      // Contract details - remove 'hash-' prefix and convert to byte array
+      const contractHashString = CONTRACTS.casper.vaultContract.replace('hash-', '');
+
+      // Convert hex string to Uint8Array (browser-compatible)
+      const hexToBytes = (hex: string): Uint8Array => {
+        const bytes = new Uint8Array(hex.length / 2);
+        for (let i = 0; i < hex.length; i += 2) {
+          bytes[i / 2] = parseInt(hex.substr(i, 2), 16);
+        }
+        return bytes;
+      };
+
+      const contractHashBytes = hexToBytes(contractHashString);
+
+      // Prepare runtime arguments for lock_cspr
+      const runtimeArgs = RuntimeArgs.fromMap({
+        destination_chain: CLValueBuilder.string('ethereum'),
+        destination_address: CLValueBuilder.string(ethereumAddress),
+        amount: CLValueBuilder.u512(amountInMotes.toString())
+      });
+
+      // Create deploy - pass bytes directly, not wrapped in CLByteArray
+      const deploy = DeployUtil.makeDeploy(
+        new DeployUtil.DeployParams(
+          publicKey,
+          CONTRACTS.casper.networkName,
+          1, // Gas price
+          1800000 // TTL (30 minutes)
+        ),
+        DeployUtil.ExecutableDeployItem.newStoredContractByHash(
+          contractHashBytes,
+          'lock_cspr',
+          runtimeArgs
+        ),
+        DeployUtil.standardPayment(5_000_000_000) // 5 CSPR for gas
+      );
+
+      console.log('Deploy created, requesting signature from wallet...');
+      setStatus('signing');
+
+      // Sign with wallet - Casper Wallet expects the deploy JSON
+      const deployJson = DeployUtil.deployToJson(deploy);
+
+      let signedDeploy;
+
+      console.log('Calling provider.sign() with deployJson');
+      console.log('Deploy JSON to sign:', deployJson);
+
+      const signResult = await provider.sign(
+        JSON.stringify(deployJson),
+        publicKeyHex
+      );
+
+      console.log('===== WALLET SIGN RESULT =====');
+      console.log('Type:', typeof signResult);
+      console.log('Value:', signResult);
+      console.log('Keys:', signResult ? Object.keys(signResult) : 'N/A');
+      console.log('JSON:', JSON.stringify(signResult, null, 2));
+      console.log('==============================');
+
+      // Prepare deploy JSON for submission
+      let deployJsonToSubmit;
+
+      // Check if this is Casper Wallet (returns {signatureHex, signature})
+      // or CSPR.click (returns full deploy JSON)
+      if (signResult.signatureHex && signResult.signature) {
+        // Casper Wallet - manually add signature to deploy
+        console.log('Casper Wallet signature - adding to deploy');
+        const signatureHex = signResult.signatureHex;
+
+        // Add signature to the deploy JSON structure
+        const signedDeployJson = DeployUtil.deployToJson(deploy);
+
+        // CRITICAL: Approvals go INSIDE deploy.approvals, not at root level!
+        if (!signedDeployJson.deploy.approvals) {
+          signedDeployJson.deploy.approvals = [];
+        }
+
+        // Determine algorithm prefix from public key
+        // Public keys in Casper: 01 = Ed25519, 02 = Secp256k1
+        const algorithmPrefix = publicKeyHex.substring(0, 2);
+        const signatureWithPrefix = algorithmPrefix + signatureHex;
+
+        console.log('Public key algorithm prefix:', algorithmPrefix);
+        console.log('Signature with prefix:', signatureWithPrefix);
+
+        signedDeployJson.deploy.approvals.push({
+          signer: publicKeyHex,
+          signature: signatureWithPrefix
+        });
+
+        console.log('Added approval inside deploy.approvals:', signedDeployJson.deploy.approvals);
+
+        // DON'T parse back to Deploy object - use the JSON directly to preserve approvals!
+        deployJsonToSubmit = signedDeployJson;
+      } else {
+        // CSPR.click - returns full signed deploy
+        console.log('CSPR.click signed deploy');
+        let signedDeploy;
+        if (typeof signResult === 'string') {
+          signedDeploy = DeployUtil.deployFromJson(JSON.parse(signResult)).unwrap();
+        } else {
+          signedDeploy = DeployUtil.deployFromJson(signResult).unwrap();
+        }
+        deployJsonToSubmit = DeployUtil.deployToJson(signedDeploy);
+      }
+
+      console.log('Deploy signed successfully');
+
+      console.log('Submitting deploy via relayer...');
+      setStatus('submitting');
+
+      try {
+        // Submit via relayer's HTTP endpoint to avoid CORS issues
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
+
+        console.log('Sending deploy to relayer endpoint...');
+        console.log('Deploy JSON structure:', Object.keys(deployJsonToSubmit));
+        console.log('Deploy has approvals:', deployJsonToSubmit.approvals?.length || 0);
+
+        const response = await fetch('http://127.0.0.1:3001/api/submit-deploy', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            deployJson: deployJsonToSubmit,
+          }),
+          signal: controller.signal,
+        });
+
+        clearTimeout(timeoutId);
+
+        console.log('Received response from relayer:', response.status);
+
+        if (!response.ok) {
+          const errorData = await response.json();
+          console.error('Relayer error:', errorData);
+          throw new Error(errorData.message || 'Failed to submit deploy');
+        }
+
+        const result = await response.json();
+
+        console.log('✅ Deploy submitted successfully!');
+        console.log('Deploy hash:', result.deployHash);
+        console.log('Explorer:', result.explorerUrl);
+
+        setLastTransaction(result.deployHash);
+
+        console.log('🔄 Relayer will detect this lock and mint wCSPR on Ethereum');
+
+      } catch (submitError: any) {
+        console.error('Failed to submit deploy:', submitError);
+        if (submitError.name === 'AbortError') {
+          throw new Error('Request timed out after 30 seconds. Please check if the relayer is running.');
+        }
+        throw new Error(submitError.message || 'Failed to submit deploy to relayer');
+      }
+
+    } catch (error: any) {
+      console.error('Casper bridge error:', error);
+      throw new Error(error.message || 'Failed to bridge from Casper');
+    }
   };
 
   const bridgeEthereumToCasper = async () => {
@@ -145,8 +323,8 @@ export function BridgeForm() {
       signer
     );
 
-    // Convert amount to wei (wCSPR has 18 decimals like ETH)
-    const amountWei = ethers.parseEther(amount);
+    // Convert amount to smallest unit (wCSPR has 9 decimals)
+    const amountWei = ethers.parseUnits(amount, 9);
 
     console.log('Burning wCSPR on Ethereum...');
     console.log('Amount:', amount, 'wCSPR');

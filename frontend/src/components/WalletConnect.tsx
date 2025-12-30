@@ -83,7 +83,7 @@ export function WalletConnect() {
             className="btn-secondary text-sm py-2 px-4 w-full flex items-center justify-center gap-2"
           >
             <Wallet size={16} />
-            Connect CSPR.click
+            Connect Wallet
           </button>
         )}
       </div>

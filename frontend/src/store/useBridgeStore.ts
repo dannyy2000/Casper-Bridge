@@ -111,7 +111,8 @@ export const useBridgeStore = create<WalletState & BridgeActions>((set, get) => 
         ethereumProvider
       );
       const wCSPRBal = await contract.balanceOf(ethereumAddress);
-      set({ wCSPRBalance: ethers.formatEther(wCSPRBal) });
+      // wCSPR has 9 decimals, not 18
+      set({ wCSPRBalance: ethers.formatUnits(wCSPRBal, 9) });
     } catch (error) {
       console.error('Failed to update Ethereum balance:', error);
     }
@@ -120,39 +121,58 @@ export const useBridgeStore = create<WalletState & BridgeActions>((set, get) => 
   // Casper wallet actions
   connectCasper: async () => {
     try {
-      // Check if CSPR.click extension is available
-      if (!window.csprclick) {
-        alert('Please install CSPR.click wallet extension!');
-        window.open('https://www.csprclick.io/', '_blank');
+      // Try Casper Wallet (official) first
+      if (window.CasperWalletProvider) {
+        console.log('Using Casper Wallet (official)');
+        const provider = window.CasperWalletProvider();
+
+        // Request connection
+        const isConnected = await provider.requestConnection();
+
+        if (!isConnected) {
+          console.log('User rejected connection');
+          return;
+        }
+
+        // Get active key
+        const activeKey = await provider.getActivePublicKey();
+
+        set({
+          casperAddress: activeKey,
+        });
+
+        await get().updateCasperBalance();
+        console.log('✅ Connected to Casper Wallet:', activeKey);
         return;
       }
 
-      // Request connection
-      const connected = await window.csprclick.requestConnection();
+      // Fallback to CSPR.click
+      if (window.csprclick) {
+        console.log('Using CSPR.click wallet');
+        const connected = await window.csprclick.requestConnection();
 
-      if (!connected) {
-        console.log('User rejected connection');
+        if (!connected) {
+          console.log('User rejected connection');
+          return;
+        }
+
+        const account = await window.csprclick.getActivePublicKey();
+
+        set({
+          casperAddress: account,
+        });
+
+        await get().updateCasperBalance();
+        console.log('✅ Connected to CSPR.click:', account);
         return;
       }
 
-      // Get active account
-      const account = await window.csprclick.getActivePublicKey();
-
-      set({
-        casperAddress: account,
-      });
-
-      // Update balance
-      await get().updateCasperBalance();
-
-      console.log('✅ Connected to Casper:', account);
+      // No wallet found
+      alert('Please install Casper Wallet or CSPR.click extension!\n\nCasper Wallet: https://www.casperwallet.io/\nCSPR.click: https://www.csprclick.io/');
+      window.open('https://www.casperwallet.io/', '_blank');
     } catch (error) {
       console.error('Failed to connect to Casper:', error);
-      // Fallback: Mock connection for development
-      set({
-        casperAddress: 'account-hash-mock-casper-address',
-        casperBalance: '1000.0',
-      });
+      alert('Failed to connect to Casper wallet. Please make sure your wallet is unlocked.');
     }
   },
 
@@ -168,10 +188,26 @@ export const useBridgeStore = create<WalletState & BridgeActions>((set, get) => 
     if (!casperAddress) return;
 
     try {
-      // TODO: Fetch actual balance from Casper network
-      set({ casperBalance: '1000.0' }); // Mock for now
+      // Use relayer proxy to avoid CORS issues
+      const response = await fetch('http://127.0.0.1:3001/api/casper-balance', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          publicKey: casperAddress,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (data.balance) {
+        set({ casperBalance: data.balance });
+      } else {
+        console.warn('Could not fetch Casper balance');
+        set({ casperBalance: 'N/A' });
+      }
     } catch (error) {
       console.error('Failed to update Casper balance:', error);
+      set({ casperBalance: 'N/A' });
     }
   },
 
@@ -189,6 +225,13 @@ declare global {
       requestConnection: () => Promise<boolean>;
       getActivePublicKey: () => Promise<string>;
       sign: (message: string) => Promise<string>;
+    };
+    CasperWalletProvider?: () => {
+      requestConnection: () => Promise<boolean>;
+      getActivePublicKey: () => Promise<string>;
+      signMessage: (message: string, publicKey: string) => Promise<{ signature: string }>;
+      sign: (deployJson: string, publicKeyHex: string, targetPublicKeyHex?: string) => Promise<any>;
+      disconnectFromSite: () => Promise<void>;
     };
   }
 }

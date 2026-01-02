@@ -67,21 +67,34 @@ export const useBridgeStore = create<WalletState & BridgeActions>((set, get) => 
       const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
       const address = accounts[0];
 
-      // Create a read-only provider using Alchemy RPC (bypasses MetaMask's RPC)
-      const alchemyProvider = new ethers.JsonRpcProvider(
+      // Create a read-only provider using public RPC
+      const provider = new ethers.JsonRpcProvider(
         CONTRACTS.ethereum.rpcUrl
       );
 
       set({
         ethereumAddress: address,
-        ethereumProvider: alchemyProvider, // Use Alchemy for all read operations
+        ethereumProvider: provider,
+      });
+
+      // Listen for account changes
+      window.ethereum.on('accountsChanged', async (accounts: string[]) => {
+        if (accounts.length === 0) {
+          // User disconnected
+          get().disconnectEthereum();
+        } else {
+          // User switched accounts
+          console.log('🔄 Account switched to:', accounts[0]);
+          set({ ethereumAddress: accounts[0] });
+          await get().updateEthereumBalance();
+        }
       });
 
       // Update balance once after connecting
       await get().updateEthereumBalance();
 
       console.log('✅ Connected to Ethereum:', address);
-      console.log('📡 Using Alchemy RPC for data queries');
+      console.log('📡 Using public RPC for data queries');
     } catch (error) {
       console.error('Failed to connect to Ethereum:', error);
     }
@@ -111,8 +124,8 @@ export const useBridgeStore = create<WalletState & BridgeActions>((set, get) => 
         ethereumProvider
       );
       const wCSPRBal = await contract.balanceOf(ethereumAddress);
-      // wCSPR has 9 decimals, not 18
-      set({ wCSPRBalance: ethers.formatUnits(wCSPRBal, 9) });
+      // wCSPR uses standard ERC20 18 decimals
+      set({ wCSPRBalance: ethers.formatEther(wCSPRBal) });
     } catch (error) {
       console.error('Failed to update Ethereum balance:', error);
     }

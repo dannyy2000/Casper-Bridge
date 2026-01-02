@@ -157,11 +157,19 @@ export class EthereumMonitor extends EventEmitter {
     logger.info('Submitting mint proof to Ethereum', { lockEvent });
 
     try {
+      // CRITICAL: Convert from Casper decimals (9) to Ethereum decimals (18)
+      // 1 CSPR = 1,000,000,000 motes (9 decimals)
+      // 1 wCSPR = 1,000,000,000,000,000,000 wei (18 decimals)
+      // Therefore: amountInWei = amountInMotes * 10^9
+      const amountInMotes = BigInt(lockEvent.amount);
+      const amountInWei = amountInMotes * BigInt(1_000_000_000); // Multiply by 10^9
+
       // STEP 1: Create message hash (MUST match contract's _getMessageHash)
+      // IMPORTANT: Use the converted amount in wei for the signature
       const messageHash = this.signer.createMessageHash(
         'casper',                        // sourceChain
         lockEvent.txHash || '0x0',       // sourceTxHash
-        lockEvent.amount.toString(),     // amount (as string)
+        amountInWei.toString(),          // amount in WEI (18 decimals)
         lockEvent.destinationAddress,    // recipient
         lockEvent.nonce.toString()       // nonce (as string)
       );
@@ -172,6 +180,8 @@ export class EthereumMonitor extends EventEmitter {
       logger.info('Generated signature for mint proof', {
         messageHash,
         signature,
+        amountInMotes: lockEvent.amount,
+        amountInWei: amountInWei.toString(),
         validator: this.signer.getAddress()
       });
 
@@ -179,7 +189,7 @@ export class EthereumMonitor extends EventEmitter {
       const proof = {
         sourceChain: 'casper',
         sourceTxHash: lockEvent.txHash || '0x0',
-        amount: lockEvent.amount,
+        amount: amountInWei.toString(),
         recipient: lockEvent.destinationAddress,
         nonce: lockEvent.nonce,
         validatorSignatures: [

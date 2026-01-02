@@ -178,6 +178,22 @@ export class CasperSigner {
     return this.bytesToHex(this.publicKey);
   }
 
+  /**
+   * Get public key as CLPublicKey for casper-js-sdk
+   */
+  getPublicKeyCL(): any {
+    const { CLPublicKey } = require('casper-js-sdk');
+    return CLPublicKey.fromEd25519(this.publicKey);
+  }
+
+  /**
+   * Get keypair for signing deploys
+   */
+  getKeyPair(): any {
+    const { Keys } = require('casper-js-sdk');
+    return Keys.Ed25519.parseKeyPair(this.publicKey, this.privateKey);
+  }
+
   // Helper functions
   private hexToBytes(hex: string): Uint8Array {
     // Remove 0x prefix if present

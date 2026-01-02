@@ -73,15 +73,20 @@ class BridgeRelayer {
 
         logger.info('Received deploy submission request');
         logger.info('Deploy JSON keys:', { keys: Object.keys(deployJson) });
-        logger.info('Deploy JSON approvals:', { approvals: deployJson.approvals?.length || 0 });
+
+        // Check for approvals in the correct nested location
+        const approvals = deployJson.deploy?.approvals || deployJson.approvals || [];
+        logger.info('Deploy JSON approvals:', { approvals: approvals.length });
 
         // Log the actual approval structure
-        if (deployJson.approvals && deployJson.approvals.length > 0) {
+        if (approvals.length > 0) {
           logger.info('Approval details:', {
-            signer: deployJson.approvals[0].signer,
-            signatureLength: deployJson.approvals[0].signature?.length || 0,
-            signatureType: typeof deployJson.approvals[0].signature,
+            signer: approvals[0].signer,
+            signatureLength: approvals[0].signature?.length || 0,
+            signatureType: typeof approvals[0].signature,
           });
+        } else {
+          logger.warn('⚠️ No approvals found in deploy! Deploy will fail without signatures.');
         }
 
         // Parse deploy from JSON - must include approvals at root level
@@ -106,6 +111,9 @@ class BridgeRelayer {
 
         logger.info('✅ Deploy submitted successfully', { deployHash });
 
+        // Track this deploy for lock event detection
+        this.casperMonitor.trackDeploy(deployHash);
+
         res.json({
           success: true,
           deployHash,
@@ -120,6 +128,31 @@ class BridgeRelayer {
       }
     });
 
+    // Endpoint to manually reprocess a past deploy
+    this.app.post('/api/reprocess-deploy', async (req, res) => {
+      try {
+        const { deployHash } = req.body;
+
+        if (!deployHash) {
+          return res.status(400).json({ error: 'Missing deployHash' });
+        }
+
+        logger.info('Received reprocess request for deploy', { deployHash });
+
+        // Track this deploy for lock event detection
+        this.casperMonitor.trackDeploy(deployHash);
+
+        res.json({
+          success: true,
+          message: 'Deploy added to tracking queue',
+          deployHash
+        });
+      } catch (error: any) {
+        logger.error('Failed to reprocess deploy', { error: error.message });
+        res.status(500).json({ error: error.message });
+      }
+    });
+
     // Casper balance endpoint to proxy RPC and avoid CORS
     this.app.post('/api/casper-balance', async (req, res) => {
       try {
@@ -129,30 +162,60 @@ class BridgeRelayer {
           return res.status(400).json({ error: 'Missing publicKey' });
         }
 
-        // Fetch balance from Casper RPC
-        const response = await fetch('http://34.220.83.153:7777/rpc', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            jsonrpc: '2.0',
-            method: 'state_get_balance',
-            params: {
-              state_root_hash: null,
-              purse_uref: null,
-              public_key: publicKey,
-            },
-            id: 1,
-          }),
-        });
+        // Use casper-js-sdk to fetch balance
+        try {
+          // Get latest block to get state root hash
+          const latestBlock = await this.casperClient.nodeClient.getLatestBlockInfo();
 
-        const data: any = await response.json();
+          logger.info('Latest block structure', {
+            topLevelKeys: Object.keys(latestBlock),
+            hasBlock: !!latestBlock.block,
+            blockType: typeof latestBlock.block,
+            fullDump: JSON.stringify(latestBlock).substring(0, 500)
+          });
 
-        if (data.result?.balance_value) {
+          // Casper 2.0: block might be directly in latestBlock or nested
+          const block = (latestBlock as any).block_with_signatures?.block || latestBlock.block;
+
+          let stateRootHash;
+          if ((block as any)?.Version2) {
+            const header = (block as any).Version2.header;
+            logger.info('Found Version2 block');
+            stateRootHash = header.state_root_hash;
+          } else if (block?.header) {
+            logger.info('Found legacy block');
+            stateRootHash = block.header.state_root_hash;
+          }
+
+          if (!stateRootHash) {
+            logger.error('Could not get state root hash', {
+              hadBlock: !!block,
+              blockKeys: Object.keys(block || {})
+            });
+            throw new Error('Could not get state root hash');
+          }
+
+          // Get balance using state query (Casper 2.0)
+          const balanceUref = await this.casperClient.nodeClient.getAccountBalanceUrefByPublicKeyHash(
+            stateRootHash,
+            publicKey
+          );
+
+          const balance = await this.casperClient.nodeClient.getAccountBalance(
+            stateRootHash,
+            balanceUref
+          );
+
           // Convert motes to CSPR
-          const balanceInMotes = BigInt(data.result.balance_value);
+          const balanceInMotes = BigInt(balance.toString());
           const balanceInCSPR = (Number(balanceInMotes) / 1_000_000_000).toFixed(2);
           res.json({ balance: balanceInCSPR });
-        } else {
+        } catch (balanceError: any) {
+          logger.warn('Could not fetch balance, account may be empty or invalid', {
+            publicKey: publicKey.substring(0, 10) + '...',
+            error: balanceError.message,
+          });
+          // Return 0 for accounts that don't exist or have no balance
           res.json({ balance: '0.00' });
         }
       } catch (error: any) {

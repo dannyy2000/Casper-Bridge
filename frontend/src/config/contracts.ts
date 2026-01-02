@@ -11,7 +11,7 @@ export const CONTRACTS = {
     abi: CasperBridgeWrapperABI.abi,
     chainId: 11155111, // Sepolia
     chainName: 'Sepolia',
-    rpcUrl: 'https://eth-sepolia.g.alchemy.com/v2/wHwbkttFi9IOFoM5Wzh31Gw1IvNHL-lt',
+    rpcUrl: 'https://ethereum-sepolia-rpc.publicnode.com',
   },
   casper: {
     // Deployed on Casper 2.1 Testnet

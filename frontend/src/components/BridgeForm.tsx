@@ -144,6 +144,9 @@ export function BridgeForm() {
         amount: CLValueBuilder.u512(amountInMotes.toString())
       });
 
+      // Create payment using the standardPayment helper
+      const payment = DeployUtil.standardPayment(5_000_000_000);
+
       // Create deploy - pass bytes directly, not wrapped in CLByteArray
       const deploy = DeployUtil.makeDeploy(
         new DeployUtil.DeployParams(
@@ -157,7 +160,7 @@ export function BridgeForm() {
           'lock_cspr',
           runtimeArgs
         ),
-        DeployUtil.standardPayment(5_000_000_000) // 5 CSPR for gas
+        payment
       );
 
       console.log('Deploy created, requesting signature from wallet...');
@@ -165,8 +168,6 @@ export function BridgeForm() {
 
       // Sign with wallet - Casper Wallet expects the deploy JSON
       const deployJson = DeployUtil.deployToJson(deploy);
-
-      let signedDeploy;
 
       console.log('Calling provider.sign() with deployJson');
       console.log('Deploy JSON to sign:', deployJson);
@@ -194,7 +195,7 @@ export function BridgeForm() {
         const signatureHex = signResult.signatureHex;
 
         // Add signature to the deploy JSON structure
-        const signedDeployJson = DeployUtil.deployToJson(deploy);
+        const signedDeployJson = DeployUtil.deployToJson(deploy) as any;
 
         // CRITICAL: Approvals go INSIDE deploy.approvals, not at root level!
         if (!signedDeployJson.deploy.approvals) {
@@ -242,7 +243,7 @@ export function BridgeForm() {
 
         console.log('Sending deploy to relayer endpoint...');
         console.log('Deploy JSON structure:', Object.keys(deployJsonToSubmit));
-        console.log('Deploy has approvals:', deployJsonToSubmit.approvals?.length || 0);
+        console.log('Deploy has approvals:', (deployJsonToSubmit as any).deploy?.approvals?.length || 0);
 
         const response = await fetch('http://127.0.0.1:3001/api/submit-deploy', {
           method: 'POST',
@@ -292,29 +293,18 @@ export function BridgeForm() {
   const bridgeEthereumToCasper = async () => {
     console.log(`Bridging ${amount} wCSPR to Casper...`);
 
-    const { ethereumProvider } = useBridgeStore.getState();
     const targetCasperAddress = casperAddress || manualCasperAddress;
 
-    if (!ethereumProvider || !targetCasperAddress) {
-      throw new Error('Ethereum wallet not connected or Casper address not provided');
+    if (!window.ethereum || !targetCasperAddress) {
+      throw new Error('MetaMask not connected or Casper address not provided');
     }
 
-    console.log('Using provider:', ethereumProvider.constructor.name);
+    // BYPASS rate limits by using MetaMask directly without BrowserProvider
+    // This avoids unnecessary RPC calls like eth_blockNumber
+    console.log('Using MetaMask directly (no BrowserProvider)');
 
-    // Get signer from MetaMask for signing transaction
-    let signer;
-    try {
-      // Use a simple provider wrapper that only calls MetaMask for signing
-      const web3Provider = new ethers.BrowserProvider(window.ethereum);
-      signer = await web3Provider.getSigner();
-      console.log('Signer obtained successfully');
-    } catch (error: any) {
-      console.error('Failed to get signer:', error);
-      if (error.message?.includes('RPC')) {
-        throw new Error('MetaMask RPC error. Please wait 1 minute and try again, or switch MetaMask to a different RPC endpoint.');
-      }
-      throw error;
-    }
+    const provider = new ethers.BrowserProvider(window.ethereum, 'any');
+    const signer = await provider.getSigner();
 
     // Create contract instance
     const contract = new ethers.Contract(
@@ -323,8 +313,8 @@ export function BridgeForm() {
       signer
     );
 
-    // Convert amount to smallest unit (wCSPR has 9 decimals)
-    const amountWei = ethers.parseUnits(amount, 9);
+    // Convert amount to smallest unit (wCSPR has 18 decimals - standard ERC20)
+    const amountWei = ethers.parseUnits(amount, 18);
 
     console.log('Burning wCSPR on Ethereum...');
     console.log('Amount:', amount, 'wCSPR');

@@ -11,6 +11,22 @@ describe("CasperBridgeWrapper", function () {
   const REQUIRED_SIGS = 2;
   const MIN_BURN = ethers.parseEther("1");
 
+  // Helper function to generate valid signatures for mint proof
+  async function generateMintSignatures(proof, validators) {
+    const messageHash = ethers.solidityPackedKeccak256(
+      ['string', 'string', 'uint256', 'address', 'uint256'],
+      [proof.sourceChain, proof.sourceTxHash, proof.amount, proof.recipient, proof.nonce]
+    );
+
+    const signatures = [];
+    for (const validator of validators) {
+      const signature = await validator.signMessage(ethers.getBytes(messageHash));
+      signatures.push(signature);
+    }
+
+    return signatures;
+  }
+
   beforeEach(async function () {
     [owner, validator1, validator2, user] = await ethers.getSigners();
 
@@ -82,6 +98,9 @@ describe("CasperBridgeWrapper", function () {
 
   describe("Burning", function () {
     it("Should allow burning tokens", async function () {
+      // Add validator1 for signing
+      await wrapper.addValidator(validator1.address);
+
       // First mint some tokens to user
       const mintAmount = ethers.parseEther("100");
       const proof = {
@@ -90,11 +109,11 @@ describe("CasperBridgeWrapper", function () {
         amount: mintAmount,
         recipient: user.address,
         nonce: 0,
-        validatorSignatures: [
-          "0x00", // Placeholder signatures for MVP
-          "0x00",
-        ],
+        validatorSignatures: [],
       };
+
+      // Generate real signatures from validators
+      proof.validatorSignatures = await generateMintSignatures(proof, [owner, validator1]);
 
       await wrapper.mint(proof);
 
@@ -123,8 +142,11 @@ describe("CasperBridgeWrapper", function () {
         amount: mintAmount,
         recipient: user.address,
         nonce: 0,
-        validatorSignatures: ["0x00", "0x00"],
+        validatorSignatures: [],
       };
+
+      // Generate real signatures from validators
+      proof.validatorSignatures = await generateMintSignatures(proof, [owner, validator1]);
 
       await wrapper.mint(proof);
 
@@ -146,8 +168,11 @@ describe("CasperBridgeWrapper", function () {
         amount: mintAmount,
         recipient: user.address,
         nonce: 0,
-        validatorSignatures: ["0x00", "0x00"],
+        validatorSignatures: [],
       };
+
+      // Generate real signatures from validators
+      proof.validatorSignatures = await generateMintSignatures(proof, [owner, validator1]);
 
       await wrapper.mint(proof);
 
@@ -170,11 +195,11 @@ describe("CasperBridgeWrapper", function () {
         amount: amount,
         recipient: user.address,
         nonce: 0,
-        validatorSignatures: [
-          "0x00", // Placeholder for MVP
-          "0x00",
-        ],
+        validatorSignatures: [],
       };
+
+      // Generate real signatures
+      proof.validatorSignatures = await generateMintSignatures(proof, [owner, validator1]);
 
       await expect(wrapper.mint(proof))
         .to.emit(wrapper, "AssetMinted")
@@ -191,8 +216,11 @@ describe("CasperBridgeWrapper", function () {
         amount: amount,
         recipient: user.address,
         nonce: 0,
-        validatorSignatures: ["0x00", "0x00"],
+        validatorSignatures: [],
       };
+
+      // Generate real signatures
+      proof.validatorSignatures = await generateMintSignatures(proof, [owner, validator1]);
 
       await wrapper.mint(proof);
 
@@ -210,8 +238,11 @@ describe("CasperBridgeWrapper", function () {
         amount: amount,
         recipient: user.address,
         nonce: 1,
-        validatorSignatures: ["0x00"], // Only 1 signature, need 2
+        validatorSignatures: [],
       };
+
+      // Generate only 1 signature when 2 are required
+      proof.validatorSignatures = await generateMintSignatures(proof, [owner]);
 
       await expect(wrapper.mint(proof)).to.be.revertedWith(
         "Insufficient validator signatures"
@@ -222,15 +253,18 @@ describe("CasperBridgeWrapper", function () {
   describe("Pause Functionality", function () {
     it("Should allow owner to pause", async function () {
       await wrapper.pause();
-      // Try to burn - should fail when paused
+      // Try to mint - should fail when paused
       const proof = {
         sourceChain: "casper",
         sourceTxHash: "0xabc123",
         amount: ethers.parseEther("100"),
         recipient: user.address,
         nonce: 0,
-        validatorSignatures: ["0x00", "0x00"],
+        validatorSignatures: [],
       };
+
+      // Generate real signatures
+      proof.validatorSignatures = await generateMintSignatures(proof, [owner, validator1]);
 
       await expect(wrapper.mint(proof)).to.be.reverted;
     });
@@ -245,8 +279,11 @@ describe("CasperBridgeWrapper", function () {
         amount: ethers.parseEther("100"),
         recipient: user.address,
         nonce: 0,
-        validatorSignatures: ["0x00", "0x00"],
+        validatorSignatures: [],
       };
+
+      // Generate real signatures
+      proof.validatorSignatures = await generateMintSignatures(proof, [owner, validator1]);
 
       await expect(wrapper.mint(proof)).to.not.be.reverted;
     });

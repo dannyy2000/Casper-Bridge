@@ -299,42 +299,76 @@ export function BridgeForm() {
       throw new Error('MetaMask not connected or Casper address not provided');
     }
 
-    // BYPASS rate limits by using MetaMask directly without BrowserProvider
-    // This avoids unnecessary RPC calls like eth_blockNumber
-    console.log('Using MetaMask directly (no BrowserProvider)');
+    try {
+      // BYPASS rate limits by using MetaMask directly without BrowserProvider
+      // This avoids unnecessary RPC calls like eth_blockNumber
+      console.log('Using MetaMask directly (no BrowserProvider)');
 
-    const provider = new ethers.BrowserProvider(window.ethereum, 'any');
-    const signer = await provider.getSigner();
+      const provider = new ethers.BrowserProvider(window.ethereum, 'any');
+      const signer = await provider.getSigner();
 
-    // Create contract instance
-    const contract = new ethers.Contract(
-      CONTRACTS.ethereum.wrapperAddress,
-      CONTRACTS.ethereum.abi,
-      signer
-    );
+      // Create contract instance
+      const contract = new ethers.Contract(
+        CONTRACTS.ethereum.wrapperAddress,
+        CONTRACTS.ethereum.abi,
+        signer
+      );
 
-    // Convert amount to smallest unit (wCSPR has 18 decimals - standard ERC20)
-    const amountWei = ethers.parseUnits(amount, 18);
+      // Convert amount to smallest unit (wCSPR has 18 decimals - standard ERC20)
+      const amountWei = ethers.parseUnits(amount, 18);
 
-    console.log('Burning wCSPR on Ethereum...');
-    console.log('Amount:', amount, 'wCSPR');
-    console.log('Destination Casper address:', targetCasperAddress);
+      console.log('Burning wCSPR on Ethereum...');
+      console.log('Amount:', amount, 'wCSPR');
+      console.log('Destination Casper address:', targetCasperAddress);
 
-    setStatus('submitting');
+      setStatus('submitting');
 
-    // Call burn function on the contract
-    // Note: burn function signature is burn(uint256 amount, string destinationChain, string destinationAddress)
-    const tx = await contract.burn(amountWei, "casper", targetCasperAddress);
+      // Call burn function on the contract
+      // Note: burn function signature is burn(uint256 amount, string destinationChain, string destinationAddress)
+      const tx = await contract.burn(amountWei, "casper", targetCasperAddress);
 
-    console.log('Transaction sent:', tx.hash);
-    setLastTransaction(tx.hash);
+      console.log('Transaction sent:', tx.hash);
+      setLastTransaction(tx.hash);
 
-    // Wait for confirmation
-    console.log('Waiting for confirmation...');
-    const receipt = await tx.wait();
+      // Wait for confirmation with timeout
+      console.log('Waiting for confirmation...');
 
-    console.log('✅ Transaction confirmed in block:', receipt.blockNumber);
-    console.log('Transaction hash:', receipt.hash);
+      try {
+        const receipt = await Promise.race([
+          tx.wait(),
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('CONFIRMATION_TIMEOUT')), 60000)
+          )
+        ]);
+
+        console.log('✅ Transaction confirmed in block:', receipt.blockNumber);
+        console.log('Transaction hash:', receipt.hash);
+      } catch (waitError: any) {
+        // If confirmation timeout or network error, transaction was still submitted
+        if (waitError.message === 'CONFIRMATION_TIMEOUT' || waitError.code === 'NETWORK_ERROR') {
+          console.log('⚠️ Confirmation pending - transaction submitted but not yet confirmed');
+          console.log('Transaction will complete in background. Hash:', tx.hash);
+          // Don't throw - transaction was successfully submitted
+          return;
+        }
+        throw waitError;
+      }
+    } catch (error: any) {
+      // Handle specific error cases with better UX
+      if (error.code === 'ACTION_REJECTED' || error.code === 4001) {
+        throw new Error('Transaction cancelled by user');
+      }
+      if (error.message?.includes('insufficient funds')) {
+        throw new Error('Insufficient balance for transaction');
+      }
+      if (error.message?.includes('CONFIRMATION_TIMEOUT')) {
+        // Transaction submitted successfully but confirmation pending
+        console.log('Transaction submitted - confirmation pending in background');
+        return;
+      }
+      // Re-throw other errors
+      throw error;
+    }
   };
 
   const setMaxAmount = () => {

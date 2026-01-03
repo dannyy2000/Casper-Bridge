@@ -333,9 +333,9 @@ Special thanks to:
 
 ## Contact
 
-- GitHub: [@yourusername](https://github.com/yourusername)
-- Twitter: [@yourhandle](https://twitter.com/yourhandle)
-- Discord: yourname#0000
+- GitHub: https://github.com/dannyy2000
+- Twitter:  https://x.com/0xDanny__
+- Discord: daniel_18804
 
 ---
 
@@ -346,5 +346,5 @@ Special thanks to:
 **Live Demo**: Coming soon
 
 **Testnet Contracts**:
-- Casper Vault: `TBD`
-- Ethereum Wrapper: `TBD`
+- Casper Vault: `hash-bb63d7f3b51f0c40ba1b70f896c5700e7be6c87d666555c5ac27e41d7c614c96`
+- Ethereum Wrapper: `0x08498FBFA0084394dF28555414F80a6C00814542`
